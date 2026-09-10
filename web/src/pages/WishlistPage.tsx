@@ -73,7 +73,7 @@ export function WishlistPage() {
           <div className="poster-grid">
             {items.map((entry, index) => (
               <article key={entry.movieId} className="group relative">
-                <Link to={`/movie/${entry.movieId}`} className="block rounded-[--radius-card]">
+                <Link to={`/movie/${entry.movieId}`} className="block rounded-card">
                   <Poster poster={entry.poster} title={entry.title} eager={index < 6} />
                   <div className="mt-2 min-w-0">
                     <h2 className="line-clamp-2 text-[0.82rem] font-semibold leading-snug" title={entry.title}>

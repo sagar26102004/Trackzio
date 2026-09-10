@@ -10,7 +10,7 @@ export function SkeletonGrid({ count = 18 }: { count?: number }) {
     <div className="poster-grid" aria-busy="true" aria-label="Loading movies">
       {Array.from({ length: count }, (_, index) => (
         <div key={index} className="space-y-2">
-          <div className="skeleton aspect-[2/3] w-full rounded-[--radius-card]" />
+          <div className="skeleton aspect-[2/3] w-full rounded-card" />
           <div className="skeleton h-3 w-4/5 rounded" />
           <div className="skeleton h-2.5 w-2/5 rounded" />
         </div>

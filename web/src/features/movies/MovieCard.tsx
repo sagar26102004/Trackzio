@@ -38,14 +38,14 @@ export const MovieCard = memo(function MovieCard({ movie, isSaved, onToggleSave,
         to={`/movie/${movie.id}`}
         // The card is a link, so the whole surface is one keyboard stop and the
         // browser gives us hover/focus and open-in-new-tab for free.
-        className="block rounded-[--radius-card] focus-visible:outline-2"
+        className="block rounded-card focus-visible:outline-2"
         // Restoring context on the way back is the router's job, but stating the
         // title here keeps the accessible name useful when the poster is missing.
         aria-label={`${movie.title}${movie.releaseYear ? `, ${movie.releaseYear}` : ''}`}
       >
         <div className="relative">
           <Poster poster={movie.poster} title={movie.title} eager={eager} />
-          <div className="pointer-events-none absolute inset-0 rounded-[--radius-card] ring-1 ring-inset ring-white/5 transition group-hover:ring-white/15" />
+          <div className="pointer-events-none absolute inset-0 rounded-card ring-1 ring-inset ring-white/5 transition group-hover:ring-white/15" />
         </div>
 
         <div className="mt-2 min-w-0">
@@ -76,11 +76,11 @@ export const MovieCard = memo(function MovieCard({ movie, isSaved, onToggleSave,
         aria-pressed={isSaved}
         aria-label={isSaved ? `Remove ${movie.title} from wishlist` : `Add ${movie.title} to wishlist`}
         title={isSaved ? 'Remove from wishlist' : 'Add to wishlist'}
-        className={`absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full backdrop-blur-sm transition
-          ${isSaved ? 'bg-ink/70 text-heart' : 'bg-ink/50 text-white/70 hover:text-white'}
-          /* Always visible on touch, where there is no hover to reveal it. */
-          opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100
-          ${isSaved ? 'sm:opacity-100' : ''}`}
+        // Fully opaque on touch, where there is no hover to reveal it; on pointer
+        // devices it fades in on hover/focus, and stays visible once saved.
+        className={`absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full opacity-100 backdrop-blur-sm transition
+          sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100
+          ${isSaved ? 'bg-ink/70 text-heart sm:opacity-100' : 'bg-ink/50 text-white/70 hover:text-white'}`}
       >
         <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill={isSaved ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
           <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8z" />

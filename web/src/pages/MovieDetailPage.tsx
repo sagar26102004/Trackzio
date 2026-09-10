@@ -24,7 +24,7 @@ function DetailSkeleton() {
     <div className="mx-auto max-w-[1200px] px-4 py-6 sm:px-6" aria-busy="true">
       <div className="skeleton mb-6 h-48 w-full rounded-2xl sm:h-72" />
       <div className="flex flex-col gap-6 sm:flex-row">
-        <div className="skeleton aspect-[2/3] w-40 shrink-0 rounded-[--radius-card]" />
+        <div className="skeleton aspect-[2/3] w-40 shrink-0 rounded-card" />
         <div className="flex-1 space-y-3">
           <div className="skeleton h-7 w-2/3 rounded" />
           <div className="skeleton h-4 w-1/3 rounded" />

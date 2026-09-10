@@ -26,7 +26,7 @@ export function Poster({ poster, title, sizes = '(max-width: 640px) 45vw, 11rem'
 
   // aspect-[2/3] reserves the space before the image exists, which is what actually
   // prevents cumulative layout shift.
-  const frame = `relative overflow-hidden rounded-[--radius-card] bg-surface-2 aspect-[2/3] ${className}`;
+  const frame = `relative overflow-hidden rounded-card bg-surface-2 aspect-[2/3] ${className}`;
 
   if (!poster || status === 'failed') {
     return (
