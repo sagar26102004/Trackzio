@@ -1,0 +1,121 @@
+@import 'tailwindcss';
+
+/**
+ * A single committed dark theme rather than a light/dark toggle.
+ *
+ * Posters are dense, saturated images and they read far better against a dark,
+ * low-chroma ground - it is why every streaming service converged on this. A
+ * toggle would double the surface area to design and test for no product gain.
+ */
+@theme {
+  --color-ink: #08090d;
+  --color-surface: #101219;
+  --color-surface-2: #171a24;
+  --color-surface-3: #1f2331;
+  --color-line: #272b39;
+  --color-line-soft: #1d2130;
+
+  --color-content: #eaecf3;
+  --color-muted: #949aae;
+  --color-faint: #646b81;
+
+  --color-brand: #f5b544;
+  --color-brand-soft: #f5b54426;
+  --color-heart: #ff5470;
+
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  --radius-card: 0.875rem;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-ink);
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-ink);
+    color: var(--color-content);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    /* Guards against a wide table or poster row forcing the whole page sideways. */
+    overflow-x: hidden;
+  }
+
+  /* A visible, consistent focus ring everywhere. Keyboard users should never have
+     to guess where they are, and the default ring disappears on dark surfaces. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-brand);
+    color: var(--color-ink);
+  }
+
+  /* Respect a user's reduced-motion preference rather than animating regardless. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* The one grid rule that carries the whole responsive story: columns are sized
+     by available space, not by breakpoint, so it adapts to any viewport width
+     including ones nobody thought to test. */
+  .poster-grid {
+    display: grid;
+    gap: 1rem 0.875rem;
+    grid-template-columns: repeat(auto-fill, minmax(clamp(8.5rem, 22vw, 11rem), 1fr));
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface-2) 25%,
+      var(--color-surface-3) 37%,
+      var(--color-surface-2) 63%
+    );
+    background-size: 400% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0 50%;
+    }
+  }
+
+  /* Horizontal scrollers (cast, similar titles) keep their own overflow so they
+     never widen the page. */
+  .rail {
+    display: flex;
+    gap: 0.875rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line) transparent;
+    padding-bottom: 0.5rem;
+  }
+
+  .rail > * {
+    scroll-snap-align: start;
+    flex: 0 0 auto;
+  }
+}

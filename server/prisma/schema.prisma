@@ -1,0 +1,66 @@
+// Trackzio data model.
+//
+// Guiding decision: we do NOT mirror the movie catalogue. TMDB owns that data and
+// it changes constantly. We own exactly two things:
+//   1. Which movies a device has wishlisted (plus a display snapshot, see below).
+//   2. A durable cache layer in front of TMDB.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// An anonymous visitor, identified by a signed httpOnly cookie. No login, but the
+/// wishlist still lives server-side so it survives closing and reopening the app.
+model Device {
+  id         String   @id @default(uuid())
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now()) @updatedAt
+
+  wishlist WishlistItem[]
+
+  @@map("devices")
+}
+
+/// A wishlisted movie. The title/poster/date/rating columns are a denormalized
+/// snapshot taken at add-time: it lets the wishlist page render from one indexed
+/// query with zero upstream calls, and keeps working while TMDB is down. The cost
+/// is staleness, which we accept and refresh lazily when the detail page is opened.
+model WishlistItem {
+  id          String    @id @default(uuid())
+  deviceId    String
+  movieId     Int
+  title       String
+  posterPath  String?
+  releaseDate DateTime?
+  voteAverage Float?
+  addedAt     DateTime  @default(now())
+  syncedAt    DateTime  @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  // Makes "add to wishlist" idempotent via upsert: a double-click cannot duplicate.
+  @@unique([deviceId, movieId])
+  // Drives the only read query we run: this device's list, newest first.
+  @@index([deviceId, addedAt])
+  @@map("wishlist_items")
+}
+
+/// L2 cache. Survives process restarts and is shared across instances, which is
+/// what makes stale-if-error possible: expired rows are kept, not deleted, so a
+/// TMDB outage degrades to slightly-old data instead of an error page.
+model CacheEntry {
+  key       String   @id
+  payload   Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // Supports the periodic sweep of entries too old to be useful even as stale.
+  @@index([expiresAt])
+  @@map("cache_entries")
+}
