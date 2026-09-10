@@ -10,7 +10,10 @@ export default defineConfig({
     env: {
       NODE_ENV: 'test',
       TMDB_ACCESS_TOKEN: 'test-token',
+      // Never reached: the suite stubs fetch and the cache degrades to its
+      // in-memory tier when Postgres is absent, so tests need no live database.
       DATABASE_URL: 'postgresql://trackzio:trackzio@localhost:5433/trackzio?schema=public',
+      DIRECT_URL: 'postgresql://trackzio:trackzio@localhost:5433/trackzio?schema=public',
       SESSION_SECRET: 'test-secret-value-long-enough',
       LOG_LEVEL: 'fatal',
     },

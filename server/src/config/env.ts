@@ -14,6 +14,9 @@ const envSchema = z.object({
   TMDB_BASE_URL: z.string().url().default('https://api.themoviedb.org/3'),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Only Prisma migrations read this, but validating it here means a broken
+  // value is caught at boot rather than halfway through a deploy.
+  DIRECT_URL: z.string().min(1, 'DIRECT_URL is required (Supabase session pooler)'),
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET must be at least 16 characters'),
 
   // Comma-separated list of exact frontend origins allowed to send credentials.

@@ -11,7 +11,13 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Runtime traffic goes through Supabase's transaction pooler (PgBouncer). It
+  // multiplexes many short-lived queries onto few Postgres connections, which is
+  // what keeps us inside the connection cap.
+  url       = env("DATABASE_URL")
+  // Migrations cannot run through a transaction pooler: they need a real session
+  // for advisory locks and DDL. This points at the session pooler instead.
+  directUrl = env("DIRECT_URL")
 }
 
 /// An anonymous visitor, identified by a signed httpOnly cookie. No login, but the

@@ -8,19 +8,18 @@ React + Vite on the front, Node/Express + Prisma/Postgres on the back, TMDB as t
 
 ## Quick start
 
-**Prerequisites:** Node 20+, Docker (for Postgres), and a free TMDB API token.
+**Prerequisites:** Node 20+, a free TMDB API token, and a Postgres database (Supabase, or Docker locally).
 
 ```bash
 # 1. Get a TMDB token: themoviedb.org → Settings → API → Developer
 #    Copy the "API Read Access Token" (the long eyJ... JWT).
 
 # 2. Configure
-cp .env.example server/.env      # then paste your token into TMDB_ACCESS_TOKEN
+cp .env.example server/.env      # fill in TMDB_ACCESS_TOKEN, DATABASE_URL, DIRECT_URL
 cp .env.example web/.env         # only VITE_API_BASE_URL is read here
 
-# 3. Install, start the database, migrate
+# 3. Install and migrate
 npm install
-docker compose up -d
 npm run db:migrate
 
 # 4. Run both apps
@@ -30,9 +29,34 @@ npm run dev
 - Web: http://localhost:5173
 - API: http://localhost:4000 (`/api/health` reports cache stats and circuit state)
 
-**Note on the database port:** the container publishes Postgres on **5433**, not 5432, so it cannot collide with a Postgres already installed on the host. If you'd rather use 5432, change it in `docker-compose.yml` and `server/.env` together.
+**Tests:** `npm test` (39 tests; no database or network required — the suite stubs `fetch` and the cache degrades to its in-memory tier).
 
-**Tests:** `npm test` (39 tests; no database or network required — the suite stubs `fetch` and degrades to the in-memory cache tier).
+### Database: two connection strings, not one
+
+Supabase dashboard → **Connect** → **ORM** → **Prisma** gives both:
+
+| Variable | Port | Used by | Why |
+|---|---|---|---|
+| `DATABASE_URL` | 6543 | Runtime | Transaction pooler (PgBouncer), multiplexing short queries onto few connections |
+| `DIRECT_URL` | 5432 | `prisma migrate` | Session pooler — migrations need a real session for advisory locks and DDL |
+
+Two details that will silently break things if you change them:
+
+- **`?pgbouncer=true` on `DATABASE_URL` is required.** It tells Prisma to stop using prepared statements, which a transaction-mode pooler cannot support. Without it you get intermittent `prepared statement "s0" already exists` errors under concurrency — the kind that pass in dev and fail under load.
+- **Use the `*.pooler.supabase.com` host, not `db.<ref>.supabase.co`.** The direct host is IPv6-only, and plenty of home and CI networks can't reach it.
+
+### Running fully offline instead
+
+`docker-compose.yml` is kept in the repo for exactly this. Point both URLs at it and you need no Supabase account:
+
+```bash
+docker compose up -d
+# DATABASE_URL=postgresql://trackzio:trackzio@localhost:5433/trackzio?schema=public
+# DIRECT_URL=postgresql://trackzio:trackzio@localhost:5433/trackzio?schema=public
+npm run db:migrate
+```
+
+The container publishes on **5433**, not 5432, so it can't collide with a Postgres already installed on the host.
 
 ---
 
@@ -113,6 +137,8 @@ TTLs: genres 24h, browse/search 5min (+10min SWR), detail 12h, 404s 60s.
 
 The 404 TTL is **negative caching**: without it, anything hitting `/api/movies/999999999` repeatedly would pass straight through to TMDB every time.
 
+Because L2 now lives on a remote Supabase instance rather than localhost, an L2 read is a real network round trip (~single-digit ms from the same region, more from a laptop). That is still an order of magnitude cheaper than a TMDB call, and L1 absorbs the hot path, but it is the reason the L1 tier exists at all rather than being redundant with Postgres.
+
 L2 writes are deliberately not awaited — a user's response shouldn't wait on a cache write, and a failed write is a performance problem, never a correctness one. An hourly sweep deletes rows too old to serve even as a fallback, so the table can't grow unbounded from every filter combination anyone ever tried.
 
 ### Surviving a bad upstream
@@ -174,7 +200,8 @@ If TMDB is unreachable when a movie is added, we **still save it** with a placeh
 - **No virtualization.** The DOM grows with each loaded page; after ~15 pages the grid gets heavy. `@tanstack/react-virtual` is the fix, deliberately deferred because it complicates the responsive auto-fill grid.
 - **Wishlist doesn't follow a user across devices** and is lost if cookies are cleared. That's the direct cost of choosing no-login.
 - **Wishlist snapshots can go stale** until the movie is viewed or re-added.
-- **The cache is per-instance for L1.** Scaling to several backend instances means each keeps its own L1 while sharing L2 — correct, but with a lower hit rate than a shared Redis would give.
+- **The cache is per-instance for L1.** Scaling to several backend instances means each keeps its own L1 while sharing L2 in Supabase — correct, but with a lower hit rate than a shared Redis would give.
+- **Supabase's free tier caps connections**, which is why `DATABASE_URL` pins `connection_limit=1` through the pooler. That is right for one dev instance; a real deployment should raise it and size it against the plan's pool.
 - **`revenue.desc` sorting degrades to popularity on the search path**, because list payloads don't carry revenue.
 - **Prisma CLI carries a transitive advisory** (`deepmerge-ts`, stack exhaustion during config parsing). It's a dev-time CLI path not reachable from the running server, and the only fix is a breaking upgrade to Prisma 8, so it's pinned at 6.19.3 knowingly.
 
