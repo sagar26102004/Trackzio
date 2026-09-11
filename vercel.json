@@ -5,7 +5,7 @@
   "outputDirectory": "web/dist",
   "framework": null,
   "functions": {
-    "api/[...path].ts": {
+    "api/server.ts": {
       "includeFiles": "{server/dist/**,server/prisma/**,node_modules/.prisma/client/**}",
       "maxDuration": 30
     },
@@ -15,7 +15,10 @@
     }
   },
   "crons": [{ "path": "/api/cron", "schedule": "0 3 * * *" }],
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }],
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/server?__p=:path" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",
