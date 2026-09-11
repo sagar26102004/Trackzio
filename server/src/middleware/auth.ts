@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { env } from '../config/env.js';
+import { baseCookieOptions } from '../lib/cookies.js';
 import { logger } from '../lib/logger.js';
 import { resolveSession, SESSION_TTL_MS, type PublicUser } from '../services/authService.js';
 import { AppError, ErrorCode } from './errors.js';
@@ -16,27 +16,14 @@ declare global {
   }
 }
 
-/** One definition of the cookie's flags, so login and logout can never disagree. */
-function sessionCookieOptions() {
-  return {
-    signed: true as const,
-    httpOnly: true as const,
-    // In production the SPA and API are different origins, which requires
-    // SameSite=None - and browsers only accept that alongside Secure.
-    sameSite: env.isProduction ? ('none' as const) : ('lax' as const),
-    secure: env.isProduction,
-    path: '/',
-  };
-}
-
 export function setSessionCookie(res: Response, token: string): void {
-  res.cookie(SESSION_COOKIE, token, { ...sessionCookieOptions(), maxAge: SESSION_TTL_MS });
+  res.cookie(SESSION_COOKIE, token, { ...baseCookieOptions(), maxAge: SESSION_TTL_MS });
 }
 
 export function clearSessionCookie(res: Response): void {
   // Same flags as when it was set: a mismatch on path or sameSite leaves the
   // original cookie in place and logout silently does nothing.
-  res.clearCookie(SESSION_COOKIE, sessionCookieOptions());
+  res.clearCookie(SESSION_COOKIE, baseCookieOptions());
 }
 
 /**

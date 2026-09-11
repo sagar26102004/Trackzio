@@ -1,0 +1,51 @@
+# Render blueprint for the Trackzio API.
+#
+# Import this from the Render dashboard (New -> Blueprint) and it provisions the
+# service with the right build, start and health-check wiring. Secrets are marked
+# sync:false so they are never committed - Render prompts for them on first deploy.
+services:
+  - type: web
+    name: trackzio-api
+    runtime: node
+    plan: free
+    # Closest Render region to the Supabase project in ap-south-1 (Mumbai). Every
+    # L2 cache read is a round trip to Postgres, so the gap between them is paid on
+    # every cache miss - worth minimising even though Render has no Mumbai region.
+    region: singapore
+    rootDir: .
+    # Migrations run at BUILD time, not start: a failed migration should fail the
+    # deploy and leave the previous version serving, rather than crash-looping a
+    # new one against a schema it cannot use.
+    buildCommand: npm ci && npm run build -w server && npm run db:deploy -w server
+    startCommand: npm run start -w server
+    # Render restarts the service if this stops returning 2xx. It reports degraded
+    # rather than failing when TMDB is down, so a third-party outage cannot trigger
+    # a restart loop on our side.
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # Two hops in front of the app: Vercel's rewrite, then Render's own proxy.
+      # This decides what req.ip resolves to, which the login rate limiter counts.
+      - key: TRUST_PROXY
+        value: "2"
+      # The SPA reaches /api on its own origin via the Vercel rewrite, so the
+      # cookies are first-party and Lax is correct. 'none' would be dropped
+      # outright by Safari and Brave.
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: TMDB_ACCESS_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: SESSION_SECRET
+        # Render generates a strong value and keeps it stable across deploys.
+        # Changing it invalidates every signed cookie, so it must not be rotated
+        # casually - doing so signs everyone out.
+        generateValue: true
+      - key: CORS_ORIGIN
+        sync: false

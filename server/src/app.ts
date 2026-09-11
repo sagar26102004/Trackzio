@@ -16,9 +16,11 @@ import { tmdbBreakerState } from './tmdb/client.js';
 export function createApp() {
   const app = express();
 
-  // We sit behind Render's proxy in production; without this, `secure` cookies are
-  // never set because Express thinks the connection is plain HTTP.
-  app.set('trust proxy', 1);
+  // Without this, Express thinks the connection is plain HTTP behind a TLS-
+  // terminating proxy and refuses to set `secure` cookies. The hop count is
+  // configurable because it also decides what req.ip resolves to, and req.ip is
+  // what the login rate limiter counts against.
+  app.set('trust proxy', env.TRUST_PROXY);
   app.disable('x-powered-by');
 
   app.use(

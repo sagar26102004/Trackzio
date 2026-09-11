@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import { env } from '../config/env.js';
+import { baseCookieOptions } from '../lib/cookies.js';
 
 export const DEVICE_COOKIE = 'tz_did';
 const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
@@ -40,16 +40,7 @@ export function deviceSession(req: Request, res: Response, next: NextFunction): 
   const deviceId = randomUUID();
   req.deviceId = deviceId;
 
-  res.cookie(DEVICE_COOKIE, deviceId, {
-    signed: true,
-    httpOnly: true,
-    // In production the API and the SPA are on different origins, which requires
-    // SameSite=None, which browsers only accept alongside Secure.
-    sameSite: env.isProduction ? 'none' : 'lax',
-    secure: env.isProduction,
-    maxAge: ONE_YEAR_MS,
-    path: '/',
-  });
+  res.cookie(DEVICE_COOKIE, deviceId, { ...baseCookieOptions(), maxAge: ONE_YEAR_MS });
 
   next();
 }

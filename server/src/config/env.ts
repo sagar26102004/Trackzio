@@ -22,6 +22,24 @@ const envSchema = z.object({
   // Comma-separated list of exact frontend origins allowed to send credentials.
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
 
+  // 'lax' when the SPA reaches the API on its own origin (localhost, or through the
+  // production rewrite). 'none' only for a genuinely cross-site deployment, which
+  // Safari and Brave will break - see lib/cookies.ts.
+  COOKIE_SAMESITE: z.enum(['lax', 'none']).default('lax'),
+
+  /**
+   * How many proxy hops to trust for the client IP.
+   *
+   * This is not cosmetic: req.ip feeds the login rate limiter. Set too low behind
+   * two proxies, every request appears to come from the CDN's address and one
+   * attacker's failures would lock out every user at once. Set too high, a client
+   * can spoof X-Forwarded-For and dodge the limit entirely.
+   *
+   * 1 for local and a single proxy (Render alone); 2 behind Vercel's rewrite in
+   * front of Render.
+   */
+  TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(1),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 });
 
