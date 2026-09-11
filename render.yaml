@@ -8,15 +8,22 @@ services:
     name: trackzio-api
     runtime: node
     plan: free
-    # Closest Render region to the Supabase project in ap-south-1 (Mumbai). Every
-    # L2 cache read is a round trip to Postgres, so the gap between them is paid on
-    # every cache miss - worth minimising even though Render has no Mumbai region.
+    # The Supabase project is in ap-northeast-1 (Tokyo) and Render has no Tokyo
+    # region, so Singapore is the closest available (~70ms, against ~230ms from
+    # Frankfurt). Every L2 cache read is a round trip to Postgres, so that gap is
+    # paid on each cache miss.
     region: singapore
     rootDir: .
     # Migrations run at BUILD time, not start: a failed migration should fail the
     # deploy and leave the previous version serving, rather than crash-looping a
     # new one against a schema it cannot use.
-    buildCommand: npm ci && npm run build -w server && npm run db:deploy -w server
+    # --include=dev is required, not optional. NODE_ENV=production is set below for
+    # the runtime, and npm reads it during install too: it flips `omit=dev`, so a
+    # plain `npm ci` skips typescript, @types/node and the Prisma CLI - all of which
+    # are build-time tools. Without this the build fails with a wall of "Cannot find
+    # name 'setTimeout' / 'fetch' / 'URL'" errors, because the Node type definitions
+    # were never installed.
+    buildCommand: npm ci --include=dev && npm run build -w server && npm run db:deploy -w server
     startCommand: npm run start -w server
     # Render restarts the service if this stops returning 2xx. It reports degraded
     # rather than failing when TMDB is down, so a third-party outage cannot trigger
