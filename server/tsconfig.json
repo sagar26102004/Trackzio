@@ -14,7 +14,10 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true,
-    "declaration": false
+    // The Vercel function entry points import from dist/, so they need real
+    // declarations - without these they resolve to `any` and lose every type.
+    "declaration": true,
+    "declarationMap": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "tests"]

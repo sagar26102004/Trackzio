@@ -7,6 +7,11 @@
 
 generator client {
   provider = "prisma-client-js"
+  // "native" builds for this laptop; the rhel target is what actually runs in a
+  // Vercel serverless function. Without it the deployed function throws
+  // "Query engine library for current platform could not be found" at runtime -
+  // a failure that never appears locally.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

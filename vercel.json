@@ -1,19 +1,21 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build -w web",
-  "installCommand": "npm ci",
+  "installCommand": "npm ci --include=dev",
+  "buildCommand": "npm run db:deploy -w server && npm run build -w server && npm run build -w web",
   "outputDirectory": "web/dist",
   "framework": null,
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://REPLACE-WITH-RENDER-URL.onrender.com/api/:path*"
+  "functions": {
+    "api/[...path].ts": {
+      "includeFiles": "{server/dist/**,server/prisma/**,node_modules/.prisma/client/**}",
+      "maxDuration": 30
     },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
+    "api/cron.ts": {
+      "includeFiles": "{server/dist/**,server/prisma/**,node_modules/.prisma/client/**}",
+      "maxDuration": 60
     }
-  ],
+  },
+  "crons": [{ "path": "/api/cron", "schedule": "0 3 * * *" }],
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }],
   "headers": [
     {
       "source": "/assets/(.*)",

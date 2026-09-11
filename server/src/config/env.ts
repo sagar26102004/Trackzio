@@ -35,8 +35,8 @@ const envSchema = z.object({
    * attacker's failures would lock out every user at once. Set too high, a client
    * can spoof X-Forwarded-For and dodge the limit entirely.
    *
-   * 1 for local and a single proxy (Render alone); 2 behind Vercel's rewrite in
-   * front of Render.
+   * 1 for local, and 1 in production: a single Vercel proxy sits in front of the
+   * serverless function.
    */
   TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(1),
 

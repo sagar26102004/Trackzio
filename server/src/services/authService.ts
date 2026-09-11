@@ -141,7 +141,7 @@ export async function authenticate(input: {
    * timing instead of wording.
    */
   if (!user) {
-    await verifyPassword(input.password, DUMMY_HASH);
+    await verifyPassword(input.password, await dummyHash());
     throw invalidCredentials();
   }
 
@@ -159,10 +159,19 @@ function invalidCredentials(): AppError {
 }
 
 /**
- * A real scrypt hash of a random value, computed once at startup, so the
- * missing-user path does the same work as the found-user path.
+ * A real scrypt hash of a random value, so the missing-user path does the same
+ * work as the found-user path and the two cannot be told apart by timing.
+ *
+ * Computed lazily and memoised rather than at module load. A top-level await would
+ * add a full scrypt round to every cold start in a serverless environment, on every
+ * request path - including the ones that never touch authentication.
  */
-const DUMMY_HASH = await hashPassword(randomBytes(16).toString('hex'));
+let dummyHashPromise: Promise<string> | null = null;
+
+function dummyHash(): Promise<string> {
+  dummyHashPromise ??= hashPassword(randomBytes(16).toString('hex'));
+  return dummyHashPromise;
+}
 
 export async function changePassword(input: {
   userId: string;

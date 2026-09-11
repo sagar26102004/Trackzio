@@ -1,10 +1,16 @@
 {
   "name": "trackzio",
   "private": true,
+  "type": "module",
   "version": "1.0.0",
   "description": "Movie discovery app - React + Node.js + Postgres",
-  "workspaces": ["server", "web"],
-  "engines": { "node": ">=20" },
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "npm run dev -w server",

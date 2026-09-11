@@ -10,9 +10,9 @@ import { env } from '../config/env.js';
  * SameSite deserves the explanation:
  *
  *   lax  (default)  correct when the SPA and API share an origin - which is what
- *                   the Vercel rewrite gives us in production, and what localhost
- *                   gives us in development. The cookie is first-party, so Safari,
- *                   Brave and Firefox all keep it.
+ *                   serving the API as a function under /api gives us in
+ *                   production, and what localhost gives us in development. The
+ *                   cookie is first-party, so Safari, Brave and Firefox all keep it.
  *
  *   none            only if the API is deployed on a genuinely different site from
  *                   the frontend. Browsers require Secure alongside it, and Safari

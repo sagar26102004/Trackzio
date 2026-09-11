@@ -217,36 +217,57 @@ If TMDB is unreachable when a movie is added, we **still save it** with a placeh
 
 ## Deployment
 
-**Frontend on Vercel, API on Render, database on Supabase.** The one non-obvious piece is that Vercel *proxies* `/api` to Render rather than the browser calling Render directly — and that is not optional.
+**Everything on Vercel — SPA, API and cron — with the database on Supabase.** The SPA is served as static assets; the Express app runs as a serverless function behind the same origin.
 
-### Why the API is proxied rather than called directly
+### Why the API lives on the same origin
 
-The session and device cookies are `httpOnly` and set by the API. If the SPA lives on `*.vercel.app` and the API on `*.onrender.com`, those are different registrable domains, so the browser treats them as **third-party cookies** — which Safari and Brave block outright and Firefox partitions.
+The session and device cookies are `httpOnly` and set by the API. If the SPA lived on `*.vercel.app` and the API on a different registrable domain, the browser would treat those cookies as **third-party** — which Safari and Brave block outright and Firefox partitions.
 
 The failure is silent and ugly: every request arrives with no cookie, the server mints a fresh anonymous device each time, and login appears to succeed then immediately signs the user out. It would work perfectly in Chrome during a demo and be broken for anyone on a Mac.
 
-The rewrite in `vercel.json` makes the browser see `/api/...` on its own origin, so the cookies are first-party (`SameSite=Lax`) and CORS disappears entirely.
+Serving the API from `/api` on the SPA's own origin makes the cookies first-party (`SameSite=Lax`) and removes CORS from the browser's path entirely.
+
+### How the pieces map onto Vercel
+
+- **`api/[...path].ts`** — a catch-all function that mounts the whole Express app. It is a catch-all rather than a rewrite to a single `/api` function so that Vercel hands the function the *original* URL (`/api/movies?...`), which is what the router mounted at `/api` expects. An Express app is already a `(req, res)` function, so it is the default export directly.
+- **`api/cron.ts`** — the housekeeping sweep. On a long-lived server this ran on a `setInterval`; serverless has no process to hold a timer, so the schedule moves out to Vercel Cron (`vercel.json` → `crons`). Without it the cache table grows a row for every filter combination anyone ever tried, and expired sessions accumulate forever.
+- **`server/src/index.ts`** — still the local-development entry point (`app.listen`, graceful shutdown, sweep timer). It is not used in production.
+- Both functions import the **compiled** server from `server/dist/`, not the TypeScript source, so the bundler follows a real `.js` file and never has to resolve NodeNext's `.js`-means-`.ts` convention — a common source of "module not found" at bundle time.
 
 ### Steps
 
-1. **Render** — New → Blueprint, point it at the repo; `render.yaml` provisions the service. Fill the secrets it prompts for: `TMDB_ACCESS_TOKEN`, `DATABASE_URL`, `DIRECT_URL`, `CORS_ORIGIN`. Use Supabase's **pooler** strings (Connect → ORM → Prisma), not `db.<ref>.supabase.co`, which is IPv6-only and unreachable from Render. Note the service URL.
-2. **`vercel.json`** — replace `REPLACE-WITH-RENDER-URL.onrender.com` with that URL and commit.
-3. **Vercel** — import the repo; `vercel.json` supplies the build settings. Do **not** set `VITE_API_BASE_URL`: leaving it unset is what makes the client use relative `/api` paths and go through the rewrite.
-4. **Back on Render** — set `CORS_ORIGIN` to the Vercel URL.
+1. **Vercel** — import the repo. `vercel.json` supplies the build settings; leave the framework preset as "Other".
+2. **Environment variables** — set these for Production (and Preview, if you use it):
+
+   | Variable | Value |
+   | --- | --- |
+   | `TMDB_ACCESS_TOKEN` | the v4 read access token |
+   | `DATABASE_URL` | Supabase **transaction pooler**, port 6543, with `?pgbouncer=true&connection_limit=1` |
+   | `DIRECT_URL` | Supabase **session pooler**, port 5432 |
+   | `SESSION_SECRET` | a long random string, generated once |
+   | `CORS_ORIGIN` | the deployment's own URL |
+   | `COOKIE_SAMESITE` | `lax` |
+   | `TRUST_PROXY` | `1` |
+   | `CRON_SECRET` | a long random string |
+
+   Do **not** set `VITE_API_BASE_URL`. Leaving it unset is what makes the client use relative `/api` paths and stay same-origin.
+3. **Deploy**, then set `CORS_ORIGIN` to the URL Vercel assigned and redeploy.
 
 ### Deployment decisions worth knowing
 
-- **Migrations run at build time**, not on start. A failed migration then fails the deploy and leaves the previous version serving, rather than crash-looping a new one against a schema it cannot use.
-- **`TRUST_PROXY=2`** on Render, because two proxies sit in front of the app (Vercel's rewrite, then Render's). Not cosmetic: `req.ip` feeds the login rate limiter, and set too low every request appears to come from the CDN — so one attacker's failures would lock out every user at once.
-- **`SESSION_SECRET` is generated by Render and must stay stable.** It signs every cookie; rotating it signs everyone out and orphans anonymous wishlists.
+- **Use the pooler connection strings, not `db.<ref>.supabase.co`.** Two separate reasons: the direct host is IPv6-only and unreachable from most serverless runtimes, and a function that scales out would open one direct Postgres connection per concurrent instance and exhaust the free tier's pool almost immediately. `pgbouncer=true` is what tells Prisma to stop using prepared statements, which a transaction-mode pooler cannot support.
+- **Migrations run at build time**, not on start. A failed migration then fails the deploy and leaves the previous version serving, rather than shipping code against a schema it cannot use. This is why `DIRECT_URL` has to be present at build time and not only at runtime.
+- **`binaryTargets` includes `rhel-openssl-3.0.x`.** `native` builds for the developer's laptop; the rhel target is what actually runs in the function. Without it the deployed function throws "Query engine library for current platform could not be found" — a failure that never appears locally.
+- **`TRUST_PROXY=1`**, because one proxy sits in front of the function. Not cosmetic: `req.ip` feeds the login rate limiter, and set too low every request appears to come from the CDN — so one attacker's failures would lock out every user at once. Set too high, a client can spoof `X-Forwarded-For` and dodge the limit entirely.
+- **`SESSION_SECRET` must stay stable.** It signs every cookie; rotating it signs everyone out and orphans anonymous wishlists.
+- **`CRON_SECRET` guards `/api/cron`.** Vercel signs cron invocations with it; without the check, anyone could hit the endpoint directly and force repeated table scans.
 - **The health check reports `degraded`, not failure, when TMDB is down**, so a third-party outage cannot trigger a restart loop on our side.
-- **Region**: Supabase is in `ap-northeast-1` (Tokyo) and Render has no Tokyo region, so the API runs in Singapore — the closest available, ~70ms away. Every L2 read pays that hop: still an order of magnitude cheaper than a TMDB call, and L1 absorbs the hot path.
-- **The build installs dev dependencies explicitly** (`npm ci --include=dev`). `NODE_ENV=production` is needed at runtime, and npm also reads it at install time and drops dev dependencies — which silently removes TypeScript, the Node type definitions and the Prisma CLI, all of which the build needs.
+- **The dummy password hash is computed lazily, not at module load.** A top-level `await hashPassword(...)` would add a full scrypt round to every cold start, on every request path — including the ones that never touch authentication.
 
 ### Known deployment limitations
 
-- **Render's free tier spins down after 15 minutes idle**, so the first request after a quiet period can take up to a minute while the instance wakes. Subsequent requests are normal.
-- **L1 cache and rate limiting are per-instance.** Correct on one instance; several would each keep their own. Redis is the real answer for both.
+- **Cold starts.** A function that has been idle pays Node startup plus a fresh Prisma connection on the next request. There is no spin-down window to wait out as there is on a free container host, but the first request after a quiet period is still visibly slower.
+- **L1 cache, rate limiting and the circuit breaker are per-instance and only survive while a container stays warm.** Module scope persists between requests on the same instance, so they do function — but two concurrent instances each keep their own, and a cold start starts from empty. L2 (Postgres `cache_entries`) is what actually carries cache effectiveness in production; Redis is the real answer for the rate limiter and breaker.
 
 ---
 
