@@ -24,14 +24,18 @@ services:
     # name 'setTimeout' / 'fetch' / 'URL'" errors, because the Node type definitions
     # were never installed.
     buildCommand: npm ci --include=dev && npm run build -w server && npm run db:deploy -w server
-    startCommand: npm run start -w server
+    # NODE_ENV is set HERE rather than as a service env var, and that placement is
+    # the fix for a real trap: Render applies env vars to the build as well as the
+    # runtime, and npm reads NODE_ENV at install time to decide whether to drop dev
+    # dependencies. Declaring it as an env var therefore silently strips typescript,
+    # @types/node and the Prisma CLI from the build. Setting it on the start command
+    # gives the runtime what it needs while leaving the build a complete toolchain.
+    startCommand: NODE_ENV=production npm run start -w server
     # Render restarts the service if this stops returning 2xx. It reports degraded
     # rather than failing when TMDB is down, so a third-party outage cannot trigger
     # a restart loop on our side.
     healthCheckPath: /api/health
     envVars:
-      - key: NODE_ENV
-        value: production
       - key: NODE_VERSION
         value: "22"
       # Two hops in front of the app: Vercel's rewrite, then Render's own proxy.
