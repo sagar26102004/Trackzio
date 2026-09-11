@@ -5,8 +5,10 @@ import { pinoHttp } from 'pino-http';
 import { cacheMetrics } from './cache/index.js';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
+import { loadUser } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { deviceSession } from './middleware/session.js';
+import { authRouter } from './routes/auth.js';
 import { moviesRouter } from './routes/movies.js';
 import { wishlistRouter } from './routes/wishlist.js';
 import { tmdbBreakerState } from './tmdb/client.js';
@@ -38,7 +40,7 @@ export function createApp() {
       // reflecting arbitrary origins would let any site read a user's wishlist.
       origin: env.corsOrigins,
       credentials: true,
-      methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+      methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
       exposedHeaders: ['X-Cache'],
     }),
   );
@@ -46,6 +48,9 @@ export function createApp() {
   app.use(express.json({ limit: '16kb' }));
   app.use(cookieParser(env.SESSION_SECRET));
   app.use(deviceSession);
+  // After deviceSession, so an anonymous device id always exists for the signup
+  // and login handlers to claim a pre-registration wishlist from.
+  app.use(loadUser);
 
   /**
    * Health endpoint that reports something worth knowing. A bare `{ok:true}` tells
@@ -62,6 +67,7 @@ export function createApp() {
     });
   });
 
+  app.use('/api', authRouter);
   app.use('/api', moviesRouter);
   app.use('/api', wishlistRouter);
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { WishlistEntry } from '../domain/types.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
+import { wishlistOwner } from '../middleware/auth.js';
 import { getMovieDetail, toApiError } from '../services/movieService.js';
 import { buildPosterUrls, extractImagePath } from '../tmdb/images.js';
 
@@ -37,7 +38,9 @@ function toEntry(row: {
  */
 wishlistRouter.get('/wishlist', async (req, res) => {
   const rows = await prisma.wishlistItem.findMany({
-    where: { deviceId: req.deviceId },
+    // Either { userId } or { deviceId } - one owner per row, and the signed-in
+    // account always wins over the device cookie.
+    where: wishlistOwner(req),
     orderBy: { addedAt: 'desc' },
     select: {
       movieId: true,
@@ -87,16 +90,26 @@ wishlistRouter.post('/wishlist', async (req, res) => {
     snapshot = { title: `Movie #${movieId}`, posterPath: null, releaseDate: null, voteAverage: null };
   }
 
-  // Created lazily so anonymous browsing never writes to the database.
-  await prisma.device.upsert({
-    where: { id: req.deviceId },
-    create: { id: req.deviceId },
-    update: { lastSeenAt: new Date() },
-  });
+  const owner = wishlistOwner(req);
+
+  // The Device row is only needed for anonymous ownership, and is created lazily
+  // so that merely browsing never writes to the database.
+  if ('deviceId' in owner) {
+    await prisma.device.upsert({
+      where: { id: owner.deviceId },
+      create: { id: owner.deviceId },
+      update: { lastSeenAt: new Date() },
+    });
+  }
 
   const row = await prisma.wishlistItem.upsert({
-    where: { deviceId_movieId: { deviceId: req.deviceId, movieId } },
-    create: { deviceId: req.deviceId, movieId, ...snapshot },
+    // Picks whichever composite unique applies to this owner, so the upsert stays
+    // idempotent in both the signed-in and anonymous cases.
+    where:
+      'userId' in owner
+        ? { userId_movieId: { userId: owner.userId, movieId } }
+        : { deviceId_movieId: { deviceId: owner.deviceId, movieId } },
+    create: { ...owner, movieId, ...snapshot },
     // Re-adding refreshes the snapshot but preserves the original addedAt, so the
     // list does not silently reorder itself.
     update: { ...snapshot, syncedAt: new Date() },
@@ -121,7 +134,7 @@ wishlistRouter.post('/wishlist', async (req, res) => {
 wishlistRouter.delete('/wishlist/:movieId', async (req, res) => {
   const { movieId } = idParamSchema.parse(req.params);
 
-  await prisma.wishlistItem.deleteMany({ where: { deviceId: req.deviceId, movieId } });
+  await prisma.wishlistItem.deleteMany({ where: { ...wishlistOwner(req), movieId } });
 
   res.setHeader('Cache-Control', 'private, no-store');
   res.status(204).end();
@@ -130,7 +143,7 @@ wishlistRouter.delete('/wishlist/:movieId', async (req, res) => {
 /** Lightweight membership check so the browse grid can mark saved movies. */
 wishlistRouter.get('/wishlist/ids', async (req, res) => {
   const rows = await prisma.wishlistItem.findMany({
-    where: { deviceId: req.deviceId },
+    where: wishlistOwner(req),
     select: { movieId: true },
   });
   res.setHeader('Cache-Control', 'private, no-store');

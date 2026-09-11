@@ -2,6 +2,8 @@ import { Route, Routes } from 'react-router-dom';
 import { Footer } from './components/Footer';
 import { Header } from './components/Header';
 import { ScrollToTop } from './components/ScrollToTop';
+import { AccountPage } from './pages/AccountPage';
+import { AuthPage } from './pages/AuthPage';
 import { BrowsePage } from './pages/BrowsePage';
 import { MovieDetailPage } from './pages/MovieDetailPage';
 import { WishlistPage } from './pages/WishlistPage';
@@ -18,6 +20,9 @@ export function App() {
           <Route path="/" element={<BrowsePage />} />
           <Route path="/movie/:id" element={<MovieDetailPage />} />
           <Route path="/wishlist" element={<WishlistPage />} />
+          <Route path="/login" element={<AuthPage mode="login" />} />
+          <Route path="/signup" element={<AuthPage mode="signup" />} />
+          <Route path="/account" element={<AccountPage />} />
           {/* Anything unrecognised falls back to browse rather than a dead end. */}
           <Route path="*" element={<BrowsePage />} />
         </Routes>

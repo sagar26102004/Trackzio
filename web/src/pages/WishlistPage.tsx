@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Poster } from '../components/ui/Poster';
 import { ErrorState, SkeletonGrid } from '../components/ui/States';
+import { useCurrentUser } from '../features/auth/api';
 import { useToggleWishlist, useWishlist } from '../features/wishlist/api';
 import { ApiError } from '../lib/apiClient';
 import type { MovieSummary, WishlistEntry } from '../types';
@@ -31,14 +32,46 @@ function toSummary(entry: WishlistEntry): MovieSummary {
 
 export function WishlistPage() {
   const { data: items, error, isPending, refetch } = useWishlist();
+  const { data: user } = useCurrentUser();
   const toggleWishlist = useToggleWishlist();
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">
       <h1 className="mb-1 text-xl font-bold tracking-tight sm:text-2xl">Your wishlist</h1>
       <p className="mb-6 text-sm text-muted">
-        Saved on this device and kept on our server, so it is still here next time you visit.
+        {user
+          ? `Saved to your account, so it follows you to any device you sign in on.`
+          : 'Saved to this device and kept on our server, so it is still here next time you visit.'}
       </p>
+
+      {/*
+        Only shown once there is something to lose. Warning an empty wishlist would
+        be nagging; warning a list the user has actually built is useful, because
+        clearing cookies really would take it away.
+      */}
+      {!user && items && items.length > 0 && (
+        <div className="mb-6 flex flex-col gap-3 rounded-xl border border-brand/25 bg-brand-soft px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-brand">
+            This list lives on this device only. Create an account to keep it.
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <Link
+              to="/signup"
+              state={{ from: '/wishlist' }}
+              className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-ink transition hover:brightness-110"
+            >
+              Create account
+            </Link>
+            <Link
+              to="/login"
+              state={{ from: '/wishlist' }}
+              className="rounded-full border border-brand/40 px-4 py-1.5 text-sm font-semibold text-brand transition hover:bg-brand/10"
+            >
+              Sign in
+            </Link>
+          </div>
+        </div>
+      )}
 
       {isPending ? (
         <SkeletonGrid count={6} />

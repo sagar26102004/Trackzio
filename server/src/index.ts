@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { sweepExpiredEntries } from './cache/index.js';
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
+import { sweepExpiredSessions } from './services/authService.js';
 import { disconnectPrisma, prisma } from './lib/prisma.js';
 
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -19,7 +20,10 @@ async function main() {
 
   // The cache table would otherwise accumulate a row for every filter combination
   // anyone has ever tried. unref() so this timer never holds the process open.
-  const sweeper = setInterval(() => void sweepExpiredEntries(), SWEEP_INTERVAL_MS);
+  const sweeper = setInterval(() => {
+    void sweepExpiredEntries();
+    void sweepExpiredSessions();
+  }, SWEEP_INTERVAL_MS);
   sweeper.unref();
 
   /**

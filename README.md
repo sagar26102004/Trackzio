@@ -99,6 +99,9 @@ web/src/
 | `GET /api/genres` | Genre list, cached 24h |
 | `GET /api/wishlist` · `POST /api/wishlist` · `DELETE /api/wishlist/:movieId` | Wishlist CRUD |
 | `GET /api/wishlist/ids` | Lightweight membership set for the grid |
+| `POST /api/auth/signup` · `POST /api/auth/login` · `POST /api/auth/logout` | Accounts |
+| `GET /api/auth/me` | Current user, or `null` when signed out |
+| `PATCH /api/auth/password` | Change password (requires the current one) |
 | `GET /api/health` | Cache hit rate, circuit state, uptime |
 
 Lists return `{ items, page, totalPages, totalResults, hasMore, stale?, notice? }`.
@@ -167,7 +170,25 @@ TMDB genuinely returns movies with a null overview, no poster, an empty-string r
 - a missing **required** field (`id`, `title`) makes the record unusable, so it's dropped
 - one malformed movie out of twenty **does not fail the page** — `parseTolerantArray` keeps the survivors and reports the drop count, which gets logged so upstream drift is visible
 
-### Wishlist: identity and what we store
+### Accounts
+
+Deliberately small: name, email, password. No email verification, no OTP, no reset flow — a signed-in user can do exactly three things (view their wishlist, change their password, sign out), because that is what the product needs.
+
+What is **not** optional, even in something this small:
+
+- **Passwords are hashed, never stored.** scrypt from Node's standard library — memory-hard, and no native module to compile. The cost parameters are stored *inside* each hash (`scrypt$16384$8$1$salt$hash`), so they can be raised later without locking existing users out. Verification is `timingSafeEqual`; a plain `===` returns faster on an early mismatch and leaks the hash a byte at a time.
+- **Sessions are server-side rows, not self-contained JWTs** — because they need to be revocable. The cookie carries a 256-bit random token and the database stores only its SHA-256, so a database dump cannot be replayed as a live session. Changing a password deletes every *other* session: if the reason you are changing it is that somebody else has it, a change that left their session alive would achieve nothing.
+- **Login failures are indistinguishable.** "No such email" and "wrong password" return byte-identical responses, and the missing-user path still runs a real hash — otherwise the timing difference leaks the same fact the wording was hiding.
+- **Login is rate limited**, per email *and* per IP. The first stops one account being ground down, the second stops one attacker spraying many. Only failures count, so a user who mistypes and then succeeds is back to a full allowance.
+- **Password rules are length-only.** Composition rules ("must contain a symbol") push people towards `Passw0rd!` — predictable to a cracker, hard for a human.
+
+### Anonymous first, account optional
+
+Browsing and the wishlist both work signed out, and a device's wishlist is **claimed into the account** on signup or login. Saving three films and then registering only to find them gone is the worst possible first impression of an account system, so ownership moves in one transaction and already-saved duplicates are dropped rather than doubled.
+
+A row is owned by *either* a device or a user, never both — enforced by a database `CHECK` constraint, not just by application code, because the schema documents that invariant and the database is the only place that can actually guarantee it. Postgres treats NULLs as distinct in a unique index, so `@@unique([deviceId, movieId])` and `@@unique([userId, movieId])` coexist and each applies only to the rows it owns.
+
+### Wishlist: what we store
 
 Identity is an **anonymous signed httpOnly cookie** carrying an opaque device id. The brief asks for a wishlist that survives closing and reopening the app but never asks for accounts, so this gives persistence with no signup friction. Signed, so a client can't hand us someone else's id; httpOnly, so page scripts can't read it. **No database write happens on read** — a `Device` row is created lazily on the first wishlist write, otherwise any crawler could fill the table.
 

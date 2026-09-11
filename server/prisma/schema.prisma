@@ -32,13 +32,61 @@ model Device {
   @@map("devices")
 }
 
+/// A registered account.
+///
+/// We store a password HASH, never the password. If this table ever leaks, plaintext
+/// passwords would compromise users everywhere else they reused that password - so
+/// the original is never written down in the first place.
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  /// Stored lowercased and trimmed so "Sagar@X.com" and "sagar@x.com" are one account.
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  sessions Session[]
+  wishlist WishlistItem[]
+
+  @@map("users")
+}
+
+/// A logged-in session.
+///
+/// Server-side rather than a self-contained JWT, for one reason that matters: these
+/// can be revoked. Logging out, or changing a password, deletes rows - a signed
+/// token would stay valid until it expired no matter what the user did.
+///
+/// Only the SHA-256 of the token is stored. The raw token lives in the user's cookie
+/// and nowhere else, so a database dump cannot be replayed as a live session.
+model Session {
+  id         String   @id @default(uuid())
+  tokenHash  String   @unique
+  userId     String
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
 /// A wishlisted movie. The title/poster/date/rating columns are a denormalized
 /// snapshot taken at add-time: it lets the wishlist page render from one indexed
 /// query with zero upstream calls, and keeps working while TMDB is down. The cost
 /// is staleness, which we accept and refresh lazily when the detail page is opened.
+///
+/// Owned by EITHER a device (anonymous) or a user (signed in) - never both. Keeping
+/// anonymous wishlists means a visitor can save films before deciding to register,
+/// and on signup or login their items are claimed into the account rather than lost.
 model WishlistItem {
   id          String    @id @default(uuid())
-  deviceId    String
+  deviceId    String?
+  userId      String?
   movieId     Int
   title       String
   posterPath  String?
@@ -47,12 +95,18 @@ model WishlistItem {
   addedAt     DateTime  @default(now())
   syncedAt    DateTime  @default(now())
 
-  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Makes "add to wishlist" idempotent via upsert: a double-click cannot duplicate.
+  // Both make "add to wishlist" idempotent via upsert, so a double-click cannot
+  // duplicate. In Postgres, NULLs compare as distinct in a unique index, so the
+  // deviceId constraint simply does not apply to user-owned rows and vice versa -
+  // which is exactly the behaviour we want from one-owner-or-the-other.
   @@unique([deviceId, movieId])
-  // Drives the only read query we run: this device's list, newest first.
+  @@unique([userId, movieId])
+  // Drive the only read queries we run: one owner's list, newest first.
   @@index([deviceId, addedAt])
+  @@index([userId, addedAt])
   @@map("wishlist_items")
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useWishlistIds } from '../features/wishlist/api';
+import { AccountMenu } from './AccountMenu';
 import { useDebouncedValue } from '../lib/hooks';
 
 /**
@@ -112,6 +113,8 @@ export function Header() {
             </span>
           )}
         </NavLink>
+
+        <AccountMenu />
       </div>
     </header>
   );
