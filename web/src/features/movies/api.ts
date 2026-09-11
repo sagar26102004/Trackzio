@@ -67,6 +67,18 @@ export function useMovies(filters: BrowseFilters) {
     // Keeps the previous result on screen while a new filter combination loads, so
     // the grid dims instead of collapsing to a spinner and bouncing the scroll.
     placeholderData: keepPreviousData,
+    /**
+     * Self-heal after an upstream outage.
+     *
+     * The `stale` flag travels with the cached payload, so without this the
+     * "showing saved results" banner would sit there for the full 5-minute
+     * staleTime even though TMDB recovered seconds later. Poll while degraded, and
+     * stop the moment a fresh response arrives - no polling in the normal case.
+     */
+    refetchInterval: (query) => {
+      const isServingStale = query.state.data?.pages.some((page) => page.stale) ?? false;
+      return isServingStale ? 15_000 : false;
+    },
   });
 }
 

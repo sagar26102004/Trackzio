@@ -43,6 +43,12 @@ describe('getOrLoad', () => {
     expect(calls).toBe(1);
     // Every waiter got the same object, not 25 separate fetches.
     expect(results.every((r) => r.value.calls === 1)).toBe(true);
+
+    // Exactly one caller performed the load; the other 24 joined it. Coalescing has
+    // to be total, not partial: the shared promise is registered synchronously, so
+    // no caller can slip past it during the awaited L2 read.
+    expect(results.filter((r) => r.status === 'MISS')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'COALESCED')).toHaveLength(24);
   });
 
   it('does not coalesce different keys', async () => {
@@ -104,7 +110,10 @@ describe('getOrLoad', () => {
   it('serves stale immediately and refreshes behind the request (stale-while-revalidate)', async () => {
     const k = key();
     const policy = { ttlMs: 5, staleWhileRevalidateMs: 60_000 };
-    const loader = vi.fn().mockResolvedValueOnce('v1').mockResolvedValueOnce('v2');
+    // mockResolvedValue, not a second mockResolvedValueOnce: the entry re-expires
+    // after 5ms, so polling below can legitimately trigger another revalidation.
+    // A "once" mock would start resolving undefined and make the test lie.
+    const loader = vi.fn().mockResolvedValueOnce('v1').mockResolvedValue('v2');
 
     await getOrLoad(k, policy, loader);
     await sleep(20);
@@ -114,12 +123,11 @@ describe('getOrLoad', () => {
     expect(stale.value).toBe('v1');
     expect(stale.status).toBe('REVALIDATING');
 
-    // ...and the refresh lands in the background, so the next read is fresh.
+    // ...and the refresh lands in the background, so a later read sees v2.
     await vi.waitFor(async () => {
       const next = await getOrLoad(k, policy, loader);
       expect(next.value).toBe('v2');
     });
-    expect(loader).toHaveBeenCalledTimes(2);
   });
 
   it('does not stampede the loader while a background revalidation is in flight', async () => {
@@ -135,9 +143,19 @@ describe('getOrLoad', () => {
     await getOrLoad(k, policy, loader);
     await sleep(20);
 
-    await Promise.all(Array.from({ length: 10 }, () => getOrLoad(k, policy, loader)));
+    const results = await Promise.all(Array.from({ length: 10 }, () => getOrLoad(k, policy, loader)));
 
-    // One initial load plus exactly one revalidation, not ten.
+    // All ten are served instantly from the expired entry; none waits on the refresh.
+    expect(results.every((r) => r.status === 'REVALIDATING')).toBe(true);
+
+    // The refresh begins behind an awaited L2 read, so it has not necessarily
+    // called the loader yet at this point - wait for the effect rather than
+    // assuming it already happened.
+    await vi.waitFor(() => expect(calls).toBe(2));
+
+    // One initial load plus exactly one revalidation, not ten. Held over a window
+    // longer than the loader takes, so a stampede would have shown up by now.
+    await sleep(80);
     expect(calls).toBe(2);
   });
 });

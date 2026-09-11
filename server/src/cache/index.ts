@@ -22,7 +22,7 @@ import { prisma } from '../lib/prisma.js';
  *                   flag instead of an error page. Degraded beats broken.
  */
 
-export type CacheStatus = 'HIT_L1' | 'HIT_L2' | 'MISS' | 'STALE' | 'REVALIDATING';
+export type CacheStatus = 'HIT_L1' | 'HIT_L2' | 'COALESCED' | 'MISS' | 'STALE' | 'REVALIDATING';
 
 export interface CacheResult<T> {
   value: T;
@@ -72,11 +72,16 @@ const inFlight = new Map<string, Promise<unknown>>();
 const metrics = { hitL1: 0, hitL2: 0, miss: 0, stale: 0, coalesced: 0 };
 
 export function cacheMetrics() {
-  const total = metrics.hitL1 + metrics.hitL2 + metrics.miss + metrics.stale;
+  const total = metrics.hitL1 + metrics.hitL2 + metrics.coalesced + metrics.miss + metrics.stale;
   return {
     ...metrics,
     total,
-    hitRate: total === 0 ? 0 : Math.round(((metrics.hitL1 + metrics.hitL2) / total) * 100) / 100,
+    // Coalesced requests are hits in every sense that matters: they were served
+    // without touching TMDB. `miss` now counts only real upstream loads.
+    hitRate:
+      total === 0
+        ? 0
+        : Math.round(((metrics.hitL1 + metrics.hitL2 + metrics.coalesced) / total) * 100) / 100,
     l1Size: l1.size,
     inFlight: inFlight.size,
   };
@@ -96,12 +101,26 @@ async function readL2<T>(key: string): Promise<StoredEntry<T> | null> {
 }
 
 function writeL2<T>(key: string, payload: T, expiresAt: Date): void {
-  const data = { payload: payload as never, expiresAt };
-  // Deliberately not awaited. The user's response does not need to wait on a cache
-  // write, and a failed write is a performance problem, never a correctness one.
-  void prisma.cacheEntry
-    .upsert({ where: { key }, create: { key, ...data }, update: data })
-    .catch((error) => logger.error({ err: error, key }, 'L2 cache write failed'));
+  // Postgres jsonb has no representation for `undefined`, and Prisma rejects it
+  // outright. There is nothing useful to cache here anyway, so skip rather than
+  // let a malformed write surface as an error.
+  if (payload === undefined) return;
+
+  // This runs inside the loader's try/catch, so a throw escaping here would be
+  // misread as an upstream failure and could trigger a bogus stale fallback. The
+  // whole call is guarded, not just the promise: Prisma can reject asynchronously,
+  // but argument validation can also throw before a promise exists.
+  try {
+    const data = { payload: payload as never, expiresAt };
+    // Deliberately not awaited. The user's response does not need to wait on a
+    // cache write, and a failed write is a performance problem, never a
+    // correctness one - the value is already in L1 and already being returned.
+    void prisma.cacheEntry
+      .upsert({ where: { key }, create: { key, ...data }, update: data })
+      .catch((error) => logger.error({ err: error, key }, 'L2 cache write failed'));
+  } catch (error) {
+    logger.error({ err: error, key }, 'L2 cache write could not be issued');
+  }
 }
 
 function isUsableAsFallback(entry: StoredEntry<unknown>, policy: CachePolicy): boolean {
@@ -110,26 +129,60 @@ function isUsableAsFallback(entry: StoredEntry<unknown>, policy: CachePolicy): b
 }
 
 /**
- * Runs the loader under single-flight, then populates both tiers.
- * Every caller for the same key awaits the same promise.
+ * Everything past the L1 check, as ONE shared promise per key: the L2 read, the
+ * upstream load, both tier writes, and the stale fallback.
+ *
+ * The scope matters. An earlier version wrapped only the loader, which left the L2
+ * read outside single-flight — and since that read is a network round trip to a
+ * remote Postgres, every concurrent caller reached it before any of them had
+ * registered as in-flight. Twenty-five simultaneous requests for a cold key issued
+ * twenty-five identical SELECTs, and if one finished its load before another
+ * finished its read, they raced into two upstream calls.
+ *
+ * Registering the promise synchronously, before the first await, closes that window
+ * completely: N concurrent callers now cost exactly one L2 read and one upstream call.
  */
-function loadOnce<T>(key: string, policy: CachePolicy, loader: () => Promise<T>): Promise<T> {
-  const existing = inFlight.get(key) as Promise<T> | undefined;
-  if (existing) {
-    metrics.coalesced += 1;
-    return existing;
-  }
+function loadShared<T>(
+  key: string,
+  policy: CachePolicy,
+  loader: () => Promise<T>,
+  l1Fallback: StoredEntry<T> | undefined,
+): Promise<CacheResult<T>> {
+  const promise = (async (): Promise<CacheResult<T>> => {
+    const l2Entry = await readL2<T>(key);
 
-  const promise = (async () => {
-    const value = await loader();
-    const expiresAtMs = Date.now() + policy.ttlMs;
-    l1.set(key, { payload: value, expiresAtMs });
-    writeL2(key, value, new Date(expiresAtMs));
-    return value;
+    if (l2Entry && l2Entry.expiresAtMs > Date.now()) {
+      metrics.hitL2 += 1;
+      // Promote into L1 so the next hit does not pay for a database round trip.
+      l1.set(key, l2Entry);
+      return { value: l2Entry.payload, status: 'HIT_L2', stale: false };
+    }
+
+    // Best fallback if the loader fails: whichever expired copy we found.
+    const fallback = l2Entry ?? l1Fallback ?? null;
+
+    try {
+      const value = await loader();
+      const expiresAtMs = Date.now() + policy.ttlMs;
+      l1.set(key, { payload: value, expiresAtMs });
+      writeL2(key, value, new Date(expiresAtMs));
+      metrics.miss += 1;
+      return { value, status: 'MISS', stale: false };
+    } catch (error) {
+      if (fallback && isUsableAsFallback(fallback, policy)) {
+        metrics.stale += 1;
+        const ageSeconds = Math.round((Date.now() - fallback.expiresAtMs) / 1000);
+        logger.warn({ key, ageSeconds, err: error }, 'Loader failed; serving stale cache entry');
+        return { value: fallback.payload as T, status: 'STALE', stale: true };
+      }
+      // Nothing usable cached and upstream is down. The route turns this into a 503.
+      throw error;
+    }
   })().finally(() => {
     inFlight.delete(key);
   });
 
+  // Synchronous, before any caller can await: this is what makes coalescing total.
   inFlight.set(key, promise);
   return promise;
 }
@@ -137,9 +190,7 @@ function loadOnce<T>(key: string, policy: CachePolicy, loader: () => Promise<T>)
 /**
  * The one function the rest of the app uses.
  *
- * Order of operations is deliberate: L1, then any in-flight load, then L2, then
- * upstream. Checking in-flight before L2 means a burst of identical requests skips
- * the database entirely rather than each paying a query to discover a shared miss.
+ * Order: L1, then stale-while-revalidate, then join-or-start the shared load.
  */
 export async function getOrLoad<T>(
   key: string,
@@ -159,45 +210,24 @@ export async function getOrLoad<T>(
   if (l1Entry && swrWindow > 0 && now - l1Entry.expiresAtMs <= swrWindow) {
     metrics.hitL1 += 1;
     if (!inFlight.has(key)) {
-      void loadOnce(key, policy, loader).catch((error) =>
+      void loadShared(key, policy, loader, l1Entry).catch((error) =>
         logger.warn({ err: error, key }, 'Background revalidation failed; stale entry retained'),
       );
     }
     return { value: l1Entry.payload, status: 'REVALIDATING', stale: true };
   }
 
-  const shared = inFlight.get(key) as Promise<T> | undefined;
+  const shared = inFlight.get(key) as Promise<CacheResult<T>> | undefined;
   if (shared) {
     metrics.coalesced += 1;
-    const value = await shared;
-    return { value, status: 'HIT_L1', stale: false };
+    // Reported as COALESCED rather than as the underlying result's status: this
+    // request cost nothing upstream, and counting it as a MISS would have made the
+    // hit rate read far worse than reality.
+    const result = await shared;
+    return { ...result, status: 'COALESCED' };
   }
 
-  const l2Entry = await readL2<T>(key);
-  if (l2Entry && l2Entry.expiresAtMs > now) {
-    metrics.hitL2 += 1;
-    // Promote into L1 so the next hit does not pay for a database round trip.
-    l1.set(key, l2Entry);
-    return { value: l2Entry.payload, status: 'HIT_L2', stale: false };
-  }
-
-  // Best fallback available if the loader fails: whichever expired copy we found.
-  const fallback = l2Entry ?? l1Entry ?? null;
-
-  try {
-    const value = await loadOnce(key, policy, loader);
-    metrics.miss += 1;
-    return { value, status: 'MISS', stale: false };
-  } catch (error) {
-    if (fallback && isUsableAsFallback(fallback, policy)) {
-      metrics.stale += 1;
-      const ageSeconds = Math.round((Date.now() - fallback.expiresAtMs) / 1000);
-      logger.warn({ key, ageSeconds, err: error }, 'Loader failed; serving stale cache entry');
-      return { value: fallback.payload as T, status: 'STALE', stale: true };
-    }
-    // Nothing cached and upstream is down. The caller turns this into a clean 503.
-    throw error;
-  }
+  return loadShared(key, policy, loader, l1Entry);
 }
 
 /** Drops a key from both tiers. Used when we know the underlying data changed. */

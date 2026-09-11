@@ -102,7 +102,12 @@ export function MovieDetailPage() {
         <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/70 to-ink/20" />
       </div>
 
-      <div className="mx-auto -mt-24 max-w-[1200px] px-4 sm:-mt-32 sm:px-6">
+      {/* `relative z-10` is load-bearing, not decoration. The backdrop above is a
+          positioned element, and positioned elements paint above static ones
+          regardless of DOM order - so without this, everything the negative margin
+          pulls up into the backdrop's box (the title and tagline) renders behind
+          it and is invisible. */}
+      <div className="relative z-10 mx-auto -mt-24 max-w-[1200px] px-4 sm:-mt-32 sm:px-6">
         <button
           type="button"
           onClick={() => navigate(-1)}

@@ -1,14 +1,19 @@
 import { Route, Routes } from 'react-router-dom';
+import { Footer } from './components/Footer';
 import { Header } from './components/Header';
+import { ScrollToTop } from './components/ScrollToTop';
 import { BrowsePage } from './pages/BrowsePage';
 import { MovieDetailPage } from './pages/MovieDetailPage';
 import { WishlistPage } from './pages/WishlistPage';
 
 export function App() {
   return (
-    <div className="min-h-dvh">
+    // Column layout with a growing main keeps the footer at the bottom of short
+    // pages (an empty wishlist) without resorting to fixed positioning.
+    <div className="flex min-h-dvh flex-col">
+      <ScrollToTop />
       <Header />
-      <main>
+      <main className="flex-1">
         <Routes>
           <Route path="/" element={<BrowsePage />} />
           <Route path="/movie/:id" element={<MovieDetailPage />} />
@@ -17,6 +22,7 @@ export function App() {
           <Route path="*" element={<BrowsePage />} />
         </Routes>
       </main>
+      <Footer />
     </div>
   );
 }

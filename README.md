@@ -104,6 +104,10 @@ web/src/
 Lists return `{ items, page, totalPages, totalResults, hasMore, stale?, notice? }`.
 Errors return `{ error: { code, message, requestId } }` where `code` is a stable machine string (`UPSTREAM_UNAVAILABLE`, `RATE_LIMITED`, `NOT_FOUND`, `VALIDATION_FAILED`, `INTERNAL`) — never a leaked upstream message.
 
+### Attribution
+
+TMDB's terms require their logo and the line *"This product uses the TMDB API but is not endorsed or certified by TMDB"* to be displayed. Both are in the footer (`web/src/components/Footer.tsx`). The logo is served from `web/public/`, not hotlinked, because TMDB's asset URLs are content-hashed and change whenever they redeploy.
+
 ---
 
 ## Technical decisions
@@ -130,8 +134,12 @@ Instead `GET /api/movies` picks the upstream based on whether `q` is present, an
 - **L1** — in-process LRU, bounded at 1,000 entries. Microsecond hits.
 - **L2** — Postgres `cache_entries`. Survives restarts and deploys, shared across instances, and is what makes stale serving possible.
 - **Single-flight** — a map of in-flight promises keyed by cache key. Fifty simultaneous requests for the same page produce **one** upstream call. This is the direct answer to "the same information is requested repeatedly", and it's also what protects TMDB when a user hammers the filter bar.
+
+  The *scope* of that promise matters more than it looks. It wraps the L2 read as well as the loader, and is registered synchronously before the first `await`. An earlier version wrapped only the loader, which left a window the width of a database round trip during which no caller had registered yet — measured against the live API, 25 concurrent requests for a cold key issued 25 identical `SELECT`s and raced into **2** upstream calls. With the promise registered up front it is exactly one of each; verified end-to-end as `1 MISS + 24 COALESCED`.
 - **stale-while-revalidate** — past the TTL but inside the SWR window, the expired entry is served *immediately* and refreshed in the background. The user waits on nothing.
 - **stale-if-error** — expired rows are kept, never deleted on expiry. When TMDB is slow, down, or rate-limiting, we serve slightly-old data flagged `stale: true` and the UI shows a quiet "showing saved results" bar. **Degraded beats broken.**
+
+`miss` counts only real upstream loads, and coalesced requests count as hits — they were served without touching TMDB, so counting them as misses made the reported hit rate read far worse than reality. `/api/health` exposes the breakdown.
 
 TTLs: genres 24h, browse/search 5min (+10min SWR), detail 12h, 404s 60s.
 
@@ -179,6 +187,8 @@ If TMDB is unreachable when a movie is added, we **still save it** with a placeh
 - **Posters** are the messiest real-world case, handled in one component: a fixed 2:3 box with `object-cover` (so TMDB's occasional 4:3 artwork is cropped, never stretched, and never changes row height), a `srcset` across three widths, `loading="lazy"` beyond the first row, a shimmer placeholder at the exact final dimensions so nothing reflows, and a typographic fallback tile when there's no poster at all.
 - **Long titles** get `line-clamp-2` plus `min-w-0` on flex children, so they can't widen a grid column or spill into the next card.
 - **Responsive** rests mainly on one rule: `grid-template-columns: repeat(auto-fill, minmax(clamp(8.5rem, 22vw, 11rem), 1fr))`. Columns are sized by available space rather than by breakpoint, so the grid adapts to viewport widths nobody thought to test. Below `md` the filter chips move into a bottom-sheet drawer, since a wall of genre chips would otherwise eat most of a phone screen before any posters appear.
+- **Scroll is conditional on navigation type** (`components/ScrollToTop.tsx`). React Router leaves scroll alone, so following a link from halfway down the grid dropped you halfway down the detail page. But always scrolling to top breaks the requirement in the other direction — Back must return you to the grid where you left it. So PUSH/REPLACE starts at the top, POP is left to the browser. Keyed on pathname only, so typing in the search box doesn't yank the page upward on every keystroke.
+- **The degraded banner self-heals.** The `stale` flag travels with the cached payload, so the "showing saved results" bar would otherwise sit there for the full 5-minute staleTime after TMDB recovered. While any loaded page is stale the query polls every 15s and stops the moment a fresh response lands — no polling in the normal case.
 - **Optimistic wishlist toggles** with rollback. The heart must feel instant; waiting on a round trip before the icon fills makes the whole app feel sluggish. Both cached shapes (the id set driving the grid, the entry list driving the wishlist page) are updated together, or the two views disagree until the next refetch.
 - **A single committed dark theme**, not a toggle. Posters are dense, saturated images and read far better on a dark, low-chroma ground — it's why every streaming service converged there. A toggle would double the design and test surface for no product gain.
 
